@@ -39,18 +39,12 @@ export const GET = apiHandler(async (
         throw new Error(`Failed to fetch video: ${response.statusText}`)
     }
 
-    // 获取内容类型和长度
     const contentType = response.headers.get('content-type') || 'video/mp4'
-    const contentLength = response.headers.get('content-length')
 
-    // 流式返回视频数据
-    const headers: HeadersInit = {
-        'Content-Type': contentType,
-        'Cache-Control': 'no-cache'
-    }
-    if (contentLength) {
-        headers['Content-Length'] = contentLength
-    }
-
-    return new Response(response.body, { headers })
+    return new Response(response.body, {
+        headers: {
+            'Content-Type': contentType,
+            'Cache-Control': 'no-cache'
+        }
+    })
 })
