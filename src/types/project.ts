@@ -1,9 +1,5 @@
 import type { CapabilitySelections } from '@/lib/model-config-contract'
-
-// ============================================
-// 项目模式类型
-// ============================================
-export type ProjectMode = 'novel-promotion'
+import type { LocationAvailableSlot } from '@/lib/location-available-slots'
 
 // ============================================
 // 基础项目类型
@@ -12,7 +8,6 @@ export interface BaseProject {
   id: string
   name: string
   description: string | null
-  mode: ProjectMode
   userId: string
   createdAt: Date
   updatedAt: Date
@@ -75,6 +70,8 @@ export interface Character {
   // 角色档案（两阶段生成）
   profileData?: string | null             // JSON格式的角色档案
   profileConfirmed?: boolean             // 档案是否已确认
+  // 任务态字段（由 tasks + hook 派生，不再依赖数据库持久化）
+  profileConfirmTaskRunning?: boolean     // 档案确认任务是否正在运行
 }
 
 // 场景图片（独立表）
@@ -84,6 +81,7 @@ export interface LocationImage {
   locationId?: string               // 可选，API 响应可能不包含
   imageIndex: number              // 图片索引：0, 1, 2
   description: string | null
+  availableSlots?: LocationAvailableSlot[] | null
   imageUrl: string | null
   media?: MediaRef | null
   previousImageUrl: string | null // 上一次的图片URL（用于撤回）
@@ -103,6 +101,16 @@ export interface Location {
   summary: string | null            // 场景简要描述（用途/人物关联）
   selectedImageId?: string | null   // 选中的图片ID（单一真源）
   images: LocationImage[]           // 独立表关联
+}
+
+export type PropImage = LocationImage
+
+export interface Prop {
+  id: string
+  name: string
+  summary: string | null
+  selectedImageId?: string | null
+  images: PropImage[]
 }
 
 export interface AssetLibraryCharacter {
@@ -146,6 +154,7 @@ export interface NovelPromotionClip {
   summary: string
   location: string | null
   characters: string | null
+  props: string | null
   content: string
   screenplay?: string | null  // 剧本JSON（Phase 0输出）
 }
@@ -160,6 +169,7 @@ export interface NovelPromotionPanel {
   description: string | null
   location: string | null
   characters: string | null
+  props: string | null
   srtSegment: string | null
   srtStart: number | null
   srtEnd: number | null
@@ -240,6 +250,7 @@ export interface NovelPromotionProject {
   storyboardModel: string
   editModel: string
   videoModel: string
+  audioModel: string
   videoRatio: string
   capabilityOverrides?: CapabilitySelections | string | null
   ttsRate: string
@@ -251,6 +262,7 @@ export interface NovelPromotionProject {
   srtContent: string | null
   characters?: Character[]
   locations?: Location[]
+  props?: Prop[]
   episodes?: Array<{
     id: string
     episodeNumber: number

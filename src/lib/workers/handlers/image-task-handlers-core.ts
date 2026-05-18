@@ -1,5 +1,6 @@
 import { type Job } from 'bullmq'
 import { prisma } from '@/lib/prisma'
+import { LOCATION_IMAGE_RATIO, PROP_IMAGE_RATIO } from '@/lib/constants'
 import { type TaskJobData } from '@/lib/task/types'
 import { encodeImageUrls } from '@/lib/contracts/image-urls-contract'
 import {
@@ -17,21 +18,31 @@ import {
   normalizeToBase64ForGeneration,
 } from '@/lib/media/outbound-image'
 import {
+  type LocationAvailableSlot,
+  stringifyLocationAvailableSlots,
+} from '@/lib/location-available-slots'
+import {
   AnyObj,
   parseImageUrls,
   pickFirstString,
   resolveNovelData,
 } from './image-task-handler-shared'
-import { executeAiVisionStep } from '@/lib/ai-runtime'
-import { buildPrompt, PROMPT_IDS } from '@/lib/prompt-i18n'
 import { createScopedLogger } from '@/lib/logging/core'
+import {
+  buildCharacterDescriptionFields,
+  generateModifiedAssetDescription,
+  readIndexedDescription,
+} from './modify-description-sync'
 
 const logger = createScopedLogger({ module: 'worker.modify-asset-image' })
 
 interface LocationImageRecord {
   id: string
   locationId: string
+  description: string | null
+  availableSlots?: string | null
   imageUrl: string | null
+  previousDescription: string | null
   location: {
     name: string
   } | null
@@ -56,6 +67,7 @@ export async function handleModifyAssetImageTask(job: Job<TaskJobData>) {
   const resolution = typeof generationOptions?.resolution === 'string'
     ? generationOptions.resolution
     : undefined
+  const modifyInstruction = typeof modifyPrompt === 'string' ? modifyPrompt.trim() : ''
 
   if (type === 'character') {
     const appearanceId = pickFirstString(payload.appearanceId, payload.targetId, job.data.targetId)
@@ -84,8 +96,13 @@ export async function handleModifyAssetImageTask(job: Job<TaskJobData>) {
     }
     const normalizedExtras = await normalizeReferenceImagesForGeneration(extraReferenceInputs)
     const referenceImages = Array.from(new Set([requiredReference, ...normalizedExtras]))
+    const currentDescription = readIndexedDescription({
+      descriptions: appearance.descriptions,
+      fallbackDescription: appearance.description,
+      index: imageIndex,
+    })
 
-    const prompt = `请根据以下指令修改图片，保持人物核心特征一致：\n${modifyPrompt}`
+    const prompt = `请根据以下指令修改图片，保持人物核心特征一致：\n${modifyInstruction}`
     const source = await resolveImageSourceFromGeneration(job, {
       userId: job.data.userId,
       modelId: editModel,
@@ -107,25 +124,31 @@ export async function handleModifyAssetImageTask(job: Job<TaskJobData>) {
     const selectedIndex = appearance.selectedIndex
     const shouldUpdateMain = selectedIndex === imageIndex || (selectedIndex === null && imageIndex === 0) || imageUrls.length === 1
 
-    // 如果有参考图，尝试用 AI 分析参考图来更新描述词（后台静默完成，不影响主流程）
-    let extractedDescription: string | undefined
-    if (normalizedExtras.length > 0) {
+    let descriptionFields: { description: string; descriptions: string } | null = null
+    if (currentDescription && modifyInstruction) {
       try {
         const userModels = await getUserModels(job.data.userId)
         const analysisModel = userModels.analysisModel
         if (analysisModel) {
-          const completion = await executeAiVisionStep({
+          const nextDescription = await generateModifiedAssetDescription({
             userId: job.data.userId,
             model: analysisModel,
-            prompt: buildPrompt({ promptId: PROMPT_IDS.CHARACTER_IMAGE_TO_DESCRIPTION, locale: job.data.locale }),
-            imageUrls: normalizedExtras,
-            temperature: 0.3,
+            locale: job.data.locale,
+            type: 'character',
+            currentDescription,
+            modifyInstruction,
+            referenceImages: normalizedExtras,
             projectId: job.data.projectId,
           })
-          extractedDescription = completion.text || undefined
+          descriptionFields = buildCharacterDescriptionFields({
+            descriptions: appearance.descriptions,
+            fallbackDescription: appearance.description,
+            index: imageIndex,
+            nextDescription: nextDescription.prompt,
+          })
         }
       } catch (err) {
-        logger.warn({ message: '参考图描述提取失败，不影响改图结果', details: { error: String(err) } })
+        logger.warn({ message: '项目角色描述同步失败，不影响改图结果', details: { error: String(err) } })
       }
     }
 
@@ -136,16 +159,17 @@ export async function handleModifyAssetImageTask(job: Job<TaskJobData>) {
         previousImageUrl: appearance.imageUrl || null,
         previousImageUrls: appearance.imageUrls,
         previousDescription: appearance.description || null,
+        previousDescriptions: appearance.descriptions || null,
         imageUrls: encodeImageUrls(imageUrls),
         imageUrl: shouldUpdateMain ? cosKey : appearance.imageUrl,
-        ...(extractedDescription ? { description: extractedDescription } : {}),
+        ...(descriptionFields || {}),
       },
     })
 
     return { type, appearanceId: appearance.id, imageIndex, imageUrl: cosKey }
   }
 
-  if (type === 'location') {
+  if (type === 'location' || type === 'prop') {
     const locationImageId = pickFirstString(payload.locationImageId, payload.targetId, job.data.targetId)
     let locationImage: LocationImageRecord | null = locationImageId
       ? await prisma.locationImage.findUnique({
@@ -181,28 +205,64 @@ export async function handleModifyAssetImageTask(job: Job<TaskJobData>) {
     const normalizedExtras = await normalizeReferenceImagesForGeneration(extraReferenceInputs)
     const referenceImages = Array.from(new Set([requiredReference, ...normalizedExtras]))
 
-    const prompt = `请根据以下指令修改场景图片，保持整体风格一致：\n${modifyPrompt}`
+    const isProp = type === 'prop'
+    const prompt = isProp
+      ? `请根据以下指令修改道具图片，保持道具主体、结构和关键材质一致：\n${modifyInstruction}`
+      : `请根据以下指令修改场景图片，保持整体风格一致：\n${modifyInstruction}`
+    const aspectRatio = isProp ? PROP_IMAGE_RATIO : LOCATION_IMAGE_RATIO
     const source = await resolveImageSourceFromGeneration(job, {
       userId: job.data.userId,
       modelId: editModel,
       prompt,
       options: {
         referenceImages,
-        aspectRatio: '1:1',
+        aspectRatio,
         ...(resolution ? { resolution } : {}),
       },
     })
 
-    const label = locationImage.location?.name || '场景'
+    const label = locationImage.location?.name || (isProp ? '道具' : '场景')
     const labeled = await withLabelBar(source, label)
-    const cosKey = await uploadImageSourceToCos(labeled, 'location-modify', locationImage.id)
+    const cosKey = await uploadImageSourceToCos(labeled, isProp ? 'prop-modify' : 'location-modify', locationImage.id)
 
-    await assertTaskActive(job, 'persist_location_modify')
+    let extractedDescription: {
+      prompt: string
+      availableSlots: LocationAvailableSlot[]
+    } | null = null
+    if (locationImage.description && modifyInstruction) {
+      try {
+        const userModels = await getUserModels(job.data.userId)
+        const analysisModel = userModels.analysisModel
+        if (analysisModel) {
+          extractedDescription = await generateModifiedAssetDescription({
+            userId: job.data.userId,
+            model: analysisModel,
+            locale: job.data.locale,
+            type: isProp ? 'prop' : 'location',
+            currentDescription: locationImage.description,
+            modifyInstruction,
+            referenceImages: normalizedExtras,
+            locationName: locationImage.location?.name || '场景',
+            propName: isProp ? (locationImage.location?.name || '道具') : undefined,
+            projectId: job.data.projectId,
+          })
+        }
+      } catch (err) {
+        logger.warn({ message: isProp ? '项目道具描述同步失败，不影响改图结果' : '项目场景描述同步失败，不影响改图结果', details: { error: String(err) } })
+      }
+    }
+
+    await assertTaskActive(job, isProp ? 'persist_prop_modify' : 'persist_location_modify')
     await prisma.locationImage.update({
       where: { id: locationImage.id },
       data: {
         previousImageUrl: locationImage.imageUrl,
+        previousDescription: locationImage.description || null,
         imageUrl: cosKey,
+        ...(extractedDescription ? {
+          description: extractedDescription.prompt,
+          availableSlots: stringifyLocationAvailableSlots(extractedDescription.availableSlots),
+        } : {}),
       },
     })
 

@@ -1,5 +1,6 @@
 import type { Job } from 'bullmq'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { LOCATION_IMAGE_RATIO, PROP_IMAGE_RATIO } from '@/lib/constants'
 import { TASK_TYPE, type TaskJobData } from '@/lib/task/types'
 
 const utilsMock = vi.hoisted(() => ({
@@ -118,17 +119,46 @@ describe('worker image-task-handlers-core', () => {
       expect.anything(),
       expect.objectContaining({
         options: expect.objectContaining({
-          aspectRatio: '1:1',
+          aspectRatio: LOCATION_IMAGE_RATIO,
           resolution: '1536x1024',
           referenceImages: ['required-reference-image', 'normalized-reference-image'],
         }),
       }),
     )
 
-    const updateArg = prismaMock.locationImage.update.mock.calls.at(-1)?.[0]
+    const locationUpdateCall = prismaMock.locationImage.update.mock.calls.at(-1) as [unknown] | undefined
+    const updateArg = locationUpdateCall?.[0]
     const updateData = readUpdateData(updateArg)
     expect(updateData.previousImageUrl).toBe('cos/location-old.png')
     expect(updateData.imageUrl).toBe('cos/new-image.png')
+  })
+
+  it('uses the character-matching aspect ratio when modifying project prop images', async () => {
+    prismaMock.locationImage.findUnique.mockResolvedValueOnce({
+      id: 'prop-image-1',
+      locationId: 'prop-1',
+      imageUrl: 'cos/prop-old.png',
+      description: 'silver prop',
+      previousDescription: null,
+      location: { name: 'Silver Prop' },
+    })
+
+    await handleModifyAssetImageTask(buildJob({
+      type: 'prop',
+      locationImageId: 'prop-image-1',
+      modifyPrompt: 'make it brushed silver',
+      generationOptions: { resolution: '1536x1024' },
+    }))
+
+    expect(utilsMock.resolveImageSourceFromGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        options: expect.objectContaining({
+          aspectRatio: PROP_IMAGE_RATIO,
+          resolution: '1536x1024',
+        }),
+      }),
+    )
   })
 
   it('updates storyboard panel image and keeps candidateImages reset', async () => {
@@ -170,7 +200,8 @@ describe('worker image-task-handlers-core', () => {
       }),
     )
 
-    const updateArg = prismaMock.novelPromotionPanel.update.mock.calls.at(-1)?.[0]
+    const panelUpdateCall = prismaMock.novelPromotionPanel.update.mock.calls.at(-1) as [unknown] | undefined
+    const updateArg = panelUpdateCall?.[0]
     const updateData = readUpdateData(updateArg)
     expect(updateData.previousImageUrl).toBe('cos/panel-old.png')
     expect(updateData.imageUrl).toBe('cos/new-image.png')

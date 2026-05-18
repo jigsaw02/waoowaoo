@@ -16,6 +16,80 @@
   {
     "modelType": "video",
     "provider": "ark",
+    "modelId": "doubao-seedance-2-0-260128",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "normal",
+          "firstlastframe"
+        ],
+        "generateAudioOptions": [
+          true,
+          false
+        ],
+        "durationOptions": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "resolutionOptions": [
+          "480p",
+          "720p"
+        ],
+        "firstlastframe": true,
+        "supportGenerateAudio": true
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "ark",
+    "modelId": "doubao-seedance-2-0-fast-260128",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "normal",
+          "firstlastframe"
+        ],
+        "generateAudioOptions": [
+          true,
+          false
+        ],
+        "durationOptions": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "resolutionOptions": [
+          "480p",
+          "720p"
+        ],
+        "firstlastframe": true,
+        "supportGenerateAudio": true
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "ark",
     "modelId": "doubao-seedance-1-0-pro-fast-251015",
     "capabilities": {
       "video": {
@@ -296,11 +370,13 @@
   {
     "modelType": "llm",
     "provider": "google",
-    "modelId": "gemini-3-pro-preview",
+    "modelId": "gemini-3.1-flash-lite-preview",
     "capabilities": {
       "llm": {
         "reasoningEffortOptions": [
+          "minimal",
           "low",
+          "medium",
           "high"
         ]
       }
@@ -635,6 +711,105 @@
           15
         ],
         "firstlastframe": false,
+        "supportGenerateAudio": false
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "bailian",
+    "modelId": "wan2.7-i2v",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "normal",
+          "firstlastframe"
+        ],
+        "firstlastframe": true,
+        "supportGenerateAudio": false
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "bailian",
+    "modelId": "wan2.6-i2v-flash",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "normal"
+        ],
+        "firstlastframe": false,
+        "supportGenerateAudio": false
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "bailian",
+    "modelId": "wan2.6-i2v",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "normal"
+        ],
+        "firstlastframe": false,
+        "supportGenerateAudio": false
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "bailian",
+    "modelId": "wan2.5-i2v-preview",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "normal"
+        ],
+        "firstlastframe": false,
+        "supportGenerateAudio": false
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "bailian",
+    "modelId": "wan2.2-i2v-plus",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "normal"
+        ],
+        "firstlastframe": false,
+        "supportGenerateAudio": false
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "bailian",
+    "modelId": "wan2.2-kf2v-flash",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "firstlastframe"
+        ],
+        "firstlastframe": true,
+        "supportGenerateAudio": false
+      }
+    }
+  },
+  {
+    "modelType": "video",
+    "provider": "bailian",
+    "modelId": "wanx2.1-kf2v-plus",
+    "capabilities": {
+      "video": {
+        "generationModeOptions": [
+          "firstlastframe"
+        ],
+        "firstlastframe": true,
         "supportGenerateAudio": false
       }
     }

@@ -6,11 +6,13 @@
  */
 
 import { logInternal } from './logging/semantic'
+import { buildFalQueueUrl } from '@/lib/providers/fal/base-url'
 
 export interface TaskStatus {
     status: 'pending' | 'completed' | 'failed'
     imageUrl?: string
     videoUrl?: string
+    actualVideoTokens?: number
     error?: string
 }
 
@@ -18,6 +20,23 @@ type UnknownRecord = Record<string, unknown>
 
 function asRecord(value: unknown): UnknownRecord | null {
     return value && typeof value === 'object' ? (value as UnknownRecord) : null
+}
+
+function readArkVideoUrl(content: unknown): string | undefined {
+    const contentRecord = asRecord(content)
+    if (contentRecord && typeof contentRecord.video_url === 'string' && contentRecord.video_url.trim()) {
+        return contentRecord.video_url.trim()
+    }
+
+    if (!Array.isArray(content)) return undefined
+    for (const item of content) {
+        const itemRecord = asRecord(item)
+        const videoUrl = asRecord(itemRecord?.video_url)
+        if (videoUrl && typeof videoUrl.url === 'string' && videoUrl.url.trim()) {
+            return videoUrl.url.trim()
+        }
+    }
+    return undefined
 }
 
 function getErrorMessage(error: unknown): string {
@@ -51,7 +70,7 @@ export async function queryBananaTaskStatus(requestId: string, apiKey: string): 
 
     try {
         const statusResponse = await fetch(
-            `https://queue.fal.run/fal-ai/nano-banana-pro/requests/${requestId}/status`,
+            buildFalQueueUrl(`fal-ai/nano-banana-pro/requests/${requestId}/status`),
             {
                 headers: { 'Authorization': `Key ${apiKey}` },
                 cache: 'no-store'
@@ -68,7 +87,7 @@ export async function queryBananaTaskStatus(requestId: string, apiKey: string): 
         if (data.status === 'COMPLETED') {
             // 获取结果
             const resultResponse = await fetch(
-                `https://queue.fal.run/fal-ai/nano-banana-pro/requests/${requestId}`,
+                buildFalQueueUrl(`fal-ai/nano-banana-pro/requests/${requestId}`),
                 {
                     headers: { 'Authorization': `Key ${apiKey}` },
                     cache: 'no-store'
@@ -305,12 +324,19 @@ export async function querySeedanceVideoStatus(taskId: string, apiKey: string): 
 
         const queryData = await queryResponse.json()
         const status = queryData.status
+        const actualVideoTokens = typeof queryData?.usage?.total_tokens === 'number'
+            ? queryData.usage.total_tokens
+            : undefined
 
         if (status === 'succeeded') {
-            const videoUrl = queryData.content?.video_url
+            const videoUrl = readArkVideoUrl(queryData.content)
 
             if (videoUrl) {
-                return { status: 'completed', videoUrl }
+                return {
+                    status: 'completed',
+                    videoUrl,
+                    ...(typeof actualVideoTokens === 'number' ? { actualVideoTokens } : {}),
+                }
             }
 
             return { status: 'failed', error: 'No video URL in response' }

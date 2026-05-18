@@ -1,4 +1,5 @@
 export type RouteCategory =
+  | 'assets'
   | 'asset-hub'
   | 'novel-promotion'
   | 'projects'
@@ -11,6 +12,7 @@ export type RouteCategory =
 export type RouteContractGroup =
   | 'llm-observe-routes'
   | 'direct-submit-routes'
+  | 'crud-assets-routes'
   | 'crud-asset-hub-routes'
   | 'crud-novel-promotion-routes'
   | 'task-infra-routes'
@@ -25,10 +27,12 @@ export type RouteCatalogEntry = {
 }
 
 const ROUTE_FILES = [
+  'src/app/api/admin/download-logs/route.ts',
   'src/app/api/asset-hub/ai-design-character/route.ts',
   'src/app/api/asset-hub/ai-design-location/route.ts',
   'src/app/api/asset-hub/ai-modify-character/route.ts',
   'src/app/api/asset-hub/ai-modify-location/route.ts',
+  'src/app/api/asset-hub/ai-modify-prop/route.ts',
   'src/app/api/asset-hub/appearances/route.ts',
   'src/app/api/asset-hub/character-voice/route.ts',
   'src/app/api/asset-hub/characters/[characterId]/appearances/[appearanceIndex]/route.ts',
@@ -51,14 +55,25 @@ const ROUTE_FILES = [
   'src/app/api/asset-hub/voices/[id]/route.ts',
   'src/app/api/asset-hub/voices/route.ts',
   'src/app/api/asset-hub/voices/upload/route.ts',
+  'src/app/api/assets/[assetId]/copy/route.ts',
+  'src/app/api/assets/[assetId]/generate/route.ts',
+  'src/app/api/assets/[assetId]/modify-render/route.ts',
+  'src/app/api/assets/[assetId]/revert-render/route.ts',
+  'src/app/api/assets/[assetId]/route.ts',
+  'src/app/api/assets/[assetId]/select-render/route.ts',
+  'src/app/api/assets/[assetId]/update-label/route.ts',
+  'src/app/api/assets/[assetId]/variants/[variantId]/route.ts',
+  'src/app/api/assets/route.ts',
   'src/app/api/auth/[...nextauth]/route.ts',
   'src/app/api/auth/register/route.ts',
   'src/app/api/cos/image/route.ts',
   'src/app/api/files/[...path]/route.ts',
+  'src/app/api/storage/sign/route.ts',
   'src/app/api/novel-promotion/[projectId]/ai-create-character/route.ts',
   'src/app/api/novel-promotion/[projectId]/ai-create-location/route.ts',
   'src/app/api/novel-promotion/[projectId]/ai-modify-appearance/route.ts',
   'src/app/api/novel-promotion/[projectId]/ai-modify-location/route.ts',
+  'src/app/api/novel-promotion/[projectId]/ai-modify-prop/route.ts',
   'src/app/api/novel-promotion/[projectId]/ai-modify-shot-prompt/route.ts',
   'src/app/api/novel-promotion/[projectId]/analyze-global/route.ts',
   'src/app/api/novel-promotion/[projectId]/analyze-shot-variants/route.ts',
@@ -131,6 +146,7 @@ const ROUTE_FILES = [
   'src/app/api/runs/[runId]/cancel/route.ts',
   'src/app/api/runs/[runId]/events/route.ts',
   'src/app/api/runs/[runId]/route.ts',
+  'src/app/api/runs/[runId]/steps/[stepKey]/retry/route.ts',
   'src/app/api/runs/route.ts',
   'src/app/api/sse/route.ts',
   'src/app/api/system/boot-id/route.ts',
@@ -140,15 +156,22 @@ const ROUTE_FILES = [
   'src/app/api/tasks/route.ts',
   'src/app/api/user-preference/route.ts',
   'src/app/api/user/api-config/route.ts',
+  'src/app/api/user/assistant/chat/route.ts',
+  'src/app/api/user/api-config/assistant/validate-media-template/route.ts',
+  'src/app/api/user/api-config/assistant/probe-media-template/route.ts',
+  'src/app/api/user/api-config/probe-model-llm-protocol/route.ts',
   'src/app/api/user/api-config/test-connection/route.ts',
+  'src/app/api/user/api-config/test-provider/route.ts',
   'src/app/api/user/balance/route.ts',
   'src/app/api/user/costs/details/route.ts',
   'src/app/api/user/costs/route.ts',
+  'src/app/api/user/ai-story-expand/route.ts',
   'src/app/api/user/models/route.ts',
   'src/app/api/user/transactions/route.ts',
 ] as const
 
 function resolveCategory(routeFile: string): RouteCategory {
+  if (routeFile.startsWith('src/app/api/assets/')) return 'assets'
   if (routeFile.startsWith('src/app/api/asset-hub/')) return 'asset-hub'
   if (routeFile.startsWith('src/app/api/novel-promotion/')) return 'novel-promotion'
   if (routeFile.startsWith('src/app/api/projects/')) return 'projects'
@@ -183,7 +206,9 @@ function resolveContractGroup(routeFile: string): RouteContractGroup {
   if (
     routeFile.endsWith('/generate-image/route.ts')
     || routeFile.endsWith('/generate-video/route.ts')
+    || routeFile.endsWith('/generate/route.ts')
     || routeFile.endsWith('/modify-image/route.ts')
+    || routeFile.endsWith('/modify-render/route.ts')
     || routeFile.endsWith('/voice-design/route.ts')
     || routeFile.endsWith('/insert-panel/route.ts')
     || routeFile.endsWith('/lip-sync/route.ts')
@@ -198,6 +223,7 @@ function resolveContractGroup(routeFile: string): RouteContractGroup {
   ) {
     return 'direct-submit-routes'
   }
+  if (routeFile.startsWith('src/app/api/assets/')) return 'crud-assets-routes'
   if (routeFile.startsWith('src/app/api/asset-hub/')) return 'crud-asset-hub-routes'
   if (routeFile.startsWith('src/app/api/novel-promotion/')) return 'crud-novel-promotion-routes'
   if (

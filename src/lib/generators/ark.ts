@@ -10,9 +10,10 @@ import { logInfo as _ulogInfo, logError as _ulogError } from '@/lib/logging/core
  * - Seedance 1.0 Pro (doubao-seedance-1-0-pro-250528)
  * - Seedance 1.0 Lite (doubao-seedance-1-0-lite-i2v-250428)
  * - Seedance 1.5 Pro (doubao-seedance-1-5-pro-251215)
+ * - Seedance 2.0 / 2.0 Fast
  * - 支持批量模式 (-batch 后缀)
  * - 支持首尾帧模式
- * - 支持音频生成 (Seedance 1.5 Pro)
+ * - 支持音频生成
  */
 
 import {
@@ -24,7 +25,7 @@ import {
 } from './base'
 import { getProviderConfig } from '@/lib/api-config'
 import { arkImageGeneration, arkCreateVideoTask } from '@/lib/ark-api'
-import { imageUrlToBase64 } from '@/lib/cos'
+import { normalizeToBase64ForGeneration } from '@/lib/media/outbound-image'
 
 interface ArkImageOptions {
     aspectRatio?: string
@@ -56,7 +57,21 @@ interface ArkVideoOptions {
 
 type ArkVideoContentItem =
     | { type: 'text'; text: string }
-    | { type: 'image_url'; image_url: { url: string }; role?: 'first_frame' | 'last_frame' | 'reference_image' }
+    | {
+        type: 'image_url'
+        image_url: { url: string }
+        role?: 'first_frame' | 'last_frame' | 'reference_image'
+    }
+    | {
+        type: 'video_url'
+        video_url: { url: string }
+        role: 'reference_video'
+    }
+    | {
+        type: 'audio_url'
+        audio_url: { url: string }
+        role: 'reference_audio'
+    }
 
 interface ArkSeedanceModelSpec {
     durationMin: number
@@ -105,6 +120,24 @@ const ARK_SEEDANCE_MODEL_SPECS: Record<string, ArkSeedanceModelSpec> = {
         supportsFrames: false,
         resolutionOptions: ['480p', '720p', '1080p'],
     },
+    'doubao-seedance-2-0-260128': {
+        durationMin: 4,
+        durationMax: 15,
+        supportsFirstLastFrame: true,
+        supportsGenerateAudio: true,
+        supportsDraft: false,
+        supportsFrames: false,
+        resolutionOptions: ['480p', '720p'],
+    },
+    'doubao-seedance-2-0-fast-260128': {
+        durationMin: 4,
+        durationMax: 15,
+        supportsFirstLastFrame: true,
+        supportsGenerateAudio: true,
+        supportsDraft: false,
+        supportsFrames: false,
+        resolutionOptions: ['480p', '720p'],
+    },
 }
 
 const ARK_VIDEO_ALLOWED_RATIOS = new Set(['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'])
@@ -117,7 +150,7 @@ function isInteger(value: unknown): value is number {
 // 图像尺寸映射表
 // ============================================================
 
-// 4K 分辨率映射表（火山引擎 Seedream 只支持 4K）
+// 4K 分辨率映射表（Seedream 4.x，上限 4096x4096 ≈ 16.7M 像素）
 const SIZE_MAP_4K: Record<string, string> = {
     '1:1': '4096x4096',
     '16:9': '5456x3072',
@@ -128,6 +161,28 @@ const SIZE_MAP_4K: Record<string, string> = {
     '2:3': '3344x5016',
     '21:9': '6256x2680',
     '9:21': '2680x6256',
+}
+
+// 3K 分辨率映射表（Seedream 5.0，上限 ≈ 10,404,496 像素）
+const SIZE_MAP_3K: Record<string, string> = {
+    '1:1': '3072x3072',
+    '16:9': '4096x2304',
+    '9:16': '2304x4096',
+    '4:3': '3648x2736',
+    '3:4': '2736x3648',
+    '3:2': '3888x2592',
+    '2:3': '2592x3888',
+    '21:9': '4704x2016',
+    '9:21': '2016x4704',
+}
+
+/** Seedream 5.0 系列使用 3K 尺寸映射 */
+function isSeedream5Model(modelId: string): boolean {
+    return modelId.includes('seedream-5')
+}
+
+function getSizeMapForModel(modelId: string): Record<string, string> {
+    return isSeedream5Model(modelId) ? SIZE_MAP_3K : SIZE_MAP_4K
 }
 
 // ============================================================
@@ -161,11 +216,12 @@ export class ArkImageGenerator extends BaseImageGenerator {
         }
 
         const resolution = (options as ArkImageOptions).resolution
-        if (resolution !== undefined && resolution !== '4K') {
+        if (resolution !== undefined && resolution !== '4K' && resolution !== '3K') {
             throw new Error(`ARK_IMAGE_OPTION_VALUE_UNSUPPORTED: resolution=${resolution}`)
         }
 
-        // 决定最终 size
+        // 决定最终 size：根据模型选择合适的尺寸映射表
+        const sizeMap = getSizeMapForModel(modelId)
         let size: string | undefined
         if (directSize) {
             size = directSize
@@ -173,7 +229,7 @@ export class ArkImageGenerator extends BaseImageGenerator {
             if (!aspectRatio) {
                 throw new Error('ARK_IMAGE_OPTION_REQUIRED: aspectRatio or size must be provided')
             }
-            size = SIZE_MAP_4K[aspectRatio]
+            size = sizeMap[aspectRatio]
             if (!size) {
                 throw new Error(`ARK_IMAGE_OPTION_VALUE_UNSUPPORTED: aspectRatio=${aspectRatio}`)
             }
@@ -185,7 +241,7 @@ export class ArkImageGenerator extends BaseImageGenerator {
         const base64Images: string[] = []
         for (const imageUrl of referenceImages) {
             try {
-                const base64 = await imageUrlToBase64(imageUrl)
+                const base64 = await normalizeToBase64ForGeneration(imageUrl)
                 base64Images.push(base64)
             } catch {
                 _ulogInfo(`[ARK Image] 参考图片转换失败: ${imageUrl}`)
@@ -225,7 +281,12 @@ export class ArkImageGenerator extends BaseImageGenerator {
             logPrefix: '[ARK Image]'
         })
 
-        const imageUrl = arkData.data?.[0]?.url
+        const imageUrls = Array.isArray(arkData.data)
+            ? arkData.data
+                .map((item) => (typeof item?.url === 'string' ? item.url.trim() : ''))
+                .filter((item) => item.length > 0)
+            : []
+        const imageUrl = imageUrls[0]
 
         if (!imageUrl) {
             throw new Error('ARK 未返回图片 URL')
@@ -233,7 +294,8 @@ export class ArkImageGenerator extends BaseImageGenerator {
 
         return {
             success: true,
-            imageUrl
+            imageUrl,
+            ...(imageUrls.length > 1 ? { imageUrls } : {}),
         }
     }
 }
@@ -369,7 +431,7 @@ export class ArkVideoGenerator extends BaseVideoGenerator {
         _ulogInfo(`[ARK Video] 模型: ${realModel}, 批量: ${isBatchMode}, 分辨率: ${resolution || '(默认)'}, 时长: ${duration ?? '(默认)'}`)
 
         // 转换图片为 base64
-        const imageBase64 = await imageUrlToBase64(imageUrl)
+        const imageBase64 = await normalizeToBase64ForGeneration(imageUrl)
 
         // 构建请求体 content
         const content: ArkVideoContentItem[] = []
@@ -379,7 +441,7 @@ export class ArkVideoGenerator extends BaseVideoGenerator {
 
         if (lastFrameImageUrl) {
             // 首尾帧模式
-            const lastImageBase64 = await imageUrlToBase64(lastFrameImageUrl)
+            const lastImageBase64 = await normalizeToBase64ForGeneration(lastFrameImageUrl)
             content.push({
                 type: 'image_url',
                 image_url: { url: imageBase64 },

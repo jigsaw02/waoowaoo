@@ -1,6 +1,7 @@
 import { type Job } from 'bullmq'
 import { prisma } from '@/lib/prisma'
-import { addLocationPromptSuffix, getArtStylePrompt } from '@/lib/constants'
+import { LOCATION_IMAGE_RATIO, PROP_IMAGE_RATIO, addLocationPromptSuffix, addPropPromptSuffix, getArtStylePrompt, isArtStyleValue, type ArtStyleValue } from '@/lib/constants'
+import { normalizeImageGenerationCount } from '@/lib/image-generation/count'
 import { type TaskJobData } from '@/lib/task/types'
 import { reportTaskProgress } from '../shared'
 import {
@@ -9,14 +10,26 @@ import {
 } from '../utils'
 import {
   AnyObj,
-  generateLabeledImageToCos,
+  generateProjectLabeledImageToStorage,
   pickFirstString,
 } from './image-task-handler-shared'
+import { buildLocationImagePromptCore } from '@/lib/location-image-prompt'
+import { buildPropImagePromptCore } from '@/lib/prop-image-prompt'
+
+function resolvePayloadArtStyle(payload: AnyObj): ArtStyleValue | undefined {
+  if (!Object.prototype.hasOwnProperty.call(payload, 'artStyle')) return undefined
+  const parsedArtStyle = typeof payload.artStyle === 'string' ? payload.artStyle.trim() : ''
+  if (!isArtStyleValue(parsedArtStyle)) {
+    throw new Error('Invalid artStyle in IMAGE_LOCATION payload')
+  }
+  return parsedArtStyle
+}
 
 interface LocationImageRecord {
   id: string
   locationId: string
   description: string | null
+  availableSlots?: string | null
   imageIndex: number
   location?: { name: string } | null
 }
@@ -38,6 +51,11 @@ interface LocationImageTaskDb {
   }
 }
 
+function resolveRequestedLocationCount(payload: AnyObj): number | null {
+  if (!Object.prototype.hasOwnProperty.call(payload, 'count')) return null
+  return normalizeImageGenerationCount('location', payload.count)
+}
+
 export async function handleLocationImageTask(job: Job<TaskJobData>) {
   const payload = (job.data.payload || {}) as AnyObj
   const projectId = job.data.projectId
@@ -46,8 +64,11 @@ export async function handleLocationImageTask(job: Job<TaskJobData>) {
   const models = await getProjectModels(projectId, userId)
   const modelId = models.locationModel
   if (!modelId) throw new Error('Location model not configured')
+  const requestedCount = resolveRequestedLocationCount(payload)
 
-  const artStyle = getArtStylePrompt(models.artStyle, job.data.locale)
+  const payloadArtStyle = resolvePayloadArtStyle(payload)
+  const artStyle = getArtStylePrompt(payloadArtStyle ?? models.artStyle, job.data.locale)
+  const assetType = payload.type === 'prop' ? 'prop' : 'location'
 
   // targetId may be locationId (group) or locationImageId (single)
   const maybeLocationImage = await db.locationImage.findUnique({
@@ -74,7 +95,8 @@ export async function handleLocationImageTask(job: Job<TaskJobData>) {
       if (location?.name) {
         locationNameMap[maybeLocationImage.locationId] = location.name
       }
-      locationImages = location?.images || [maybeLocationImage]
+      const orderedImages = location?.images || [maybeLocationImage]
+      locationImages = requestedCount === null ? orderedImages : orderedImages.slice(0, requestedCount)
     }
   } else {
     const locationId = pickFirstString(payload.id, payload.locationId, job.data.targetId)
@@ -97,7 +119,7 @@ export async function handleLocationImageTask(job: Job<TaskJobData>) {
       if (!image) throw new Error(`Location image not found for imageIndex=${payload.imageIndex}`)
       locationImages = [image]
     } else {
-      locationImages = location.images
+      locationImages = requestedCount === null ? location.images : location.images.slice(0, requestedCount)
     }
   }
 
@@ -121,14 +143,27 @@ export async function handleLocationImageTask(job: Job<TaskJobData>) {
     const name = locationNameMap[item.locationId] || item.location?.name || '场景'
     const promptBody = item.description || ''
     if (!promptBody) continue
+    const promptCore = assetType === 'prop'
+      ? buildPropImagePromptCore({
+        description: promptBody,
+      })
+      : buildLocationImagePromptCore({
+        description: promptBody,
+        availableSlotsRaw: item.availableSlots,
+        locale: job.data.locale === 'en' ? 'en' : 'zh',
+      })
 
-    const prompt = artStyle ? `${addLocationPromptSuffix(promptBody)}，${artStyle}` : addLocationPromptSuffix(promptBody)
+    const promptWithSuffix = assetType === 'prop'
+      ? addPropPromptSuffix(promptCore)
+      : addLocationPromptSuffix(promptCore)
+    const prompt = artStyle ? `${promptWithSuffix}，${artStyle}` : promptWithSuffix
+    const aspectRatio = assetType === 'prop' ? PROP_IMAGE_RATIO : LOCATION_IMAGE_RATIO
     await reportTaskProgress(job, 20 + Math.floor((i / Math.max(locationImages.length, 1)) * 55), {
       stage: 'generate_location_image',
       imageId: item.id,
     })
 
-    const cosKey = await generateLabeledImageToCos({
+    const imageKey = await generateProjectLabeledImageToStorage({
       job,
       userId,
       modelId,
@@ -137,14 +172,14 @@ export async function handleLocationImageTask(job: Job<TaskJobData>) {
       targetId: item.id,
       keyPrefix: 'location',
       options: {
-        aspectRatio: '1:1',
+        aspectRatio,
       },
     })
 
     await assertTaskActive(job, 'persist_location_image')
     await db.locationImage.update({
       where: { id: item.id },
-      data: { imageUrl: cosKey },
+      data: { imageUrl: imageKey },
     })
   }
 

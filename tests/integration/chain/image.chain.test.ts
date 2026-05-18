@@ -36,7 +36,7 @@ const prismaMock = vi.hoisted(() => ({
 }))
 
 const sharedMock = vi.hoisted(() => ({
-  generateLabeledImageToCos: vi.fn(async () => 'cos/global-character-generated.png'),
+  generateCleanImageToStorage: vi.fn(async () => 'cos/global-character-generated.png'),
   parseJsonStringArray: vi.fn(() => [] as string[]),
 }))
 
@@ -70,7 +70,7 @@ vi.mock('@/lib/workers/handlers/image-task-handler-shared', async () => {
   )
   return {
     ...actual,
-    generateLabeledImageToCos: sharedMock.generateLabeledImageToCos,
+    generateCleanImageToStorage: sharedMock.generateCleanImageToStorage,
     parseJsonStringArray: sharedMock.parseJsonStringArray,
   }
 })
@@ -167,13 +167,13 @@ describe('chain contract - image queue behavior', () => {
     expect(result).toEqual({
       type: 'character',
       appearanceId: 'appearance-1',
-      imageCount: 1,
+      imageCount: 3,
     })
 
     expect(prismaMock.globalCharacterAppearance.update).toHaveBeenCalledWith({
       where: { id: 'appearance-1' },
       data: {
-        imageUrls: JSON.stringify(['cos/global-character-generated.png']),
+        imageUrls: JSON.stringify(['cos/global-character-generated.png', 'cos/global-character-generated.png', 'cos/global-character-generated.png']),
         imageUrl: 'cos/global-character-generated.png',
         selectedIndex: null,
       },

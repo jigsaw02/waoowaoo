@@ -2,7 +2,7 @@
 
 import { logInfo as _ulogInfo } from '@/lib/logging/core'
 import { useEffect, useState } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { resolveTaskPresentationState } from '@/lib/task/presentation'
 import { useWorkspaceProvider } from '../WorkspaceProvider'
@@ -16,8 +16,11 @@ import { useWorkspaceProjectSnapshot } from './useWorkspaceProjectSnapshot'
 import { useWorkspaceModalEscape } from './useWorkspaceModalEscape'
 import { useWorkspaceStageRuntime } from './useWorkspaceStageRuntime'
 import { useWorkspaceConfigActions } from './useWorkspaceConfigActions'
+import { useWorkspaceAutoRun } from './useWorkspaceAutoRun'
 import { buildWorkspaceControllerViewModel } from './workspace-controller-view-model'
 import type { NovelPromotionWorkspaceProps } from '../types'
+import { useRouter } from '@/i18n/navigation'
+import { resolveEpisodeStageArtifacts } from '@/lib/novel-promotion/stage-readiness'
 
 export function useNovelPromotionWorkspaceController({
   project,
@@ -36,7 +39,7 @@ export function useNovelPromotionWorkspaceController({
   const { onRefresh } = useWorkspaceProvider()
 
   const projectSnapshot = useWorkspaceProjectSnapshot({ project, episode, urlStage })
-  const { currentStage, episodeStoryboards, ...projectSection } = projectSnapshot
+  const { currentStage, ...projectSection } = projectSnapshot
 
   const assetsLoading = false
   const assetsLoadingState = assetsLoading
@@ -92,6 +95,7 @@ export function useNovelPromotionWorkspaceController({
   const execution = useWorkspaceExecution({
     projectId,
     episodeId,
+    currentStage,
     analysisModel: projectSnapshot.analysisModel,
     novelText: projectSnapshot.novelText,
     t,
@@ -107,19 +111,42 @@ export function useNovelPromotionWorkspaceController({
     t,
   })
 
+  const isStartingStoryToScript = rebuildState.pendingActionType === 'storyToScript'
+  const isStartingScriptToStoryboard = rebuildState.pendingActionType === 'scriptToStoryboard'
+  const isStoryToScriptRunning =
+    execution.storyToScriptStream.isRunning ||
+    execution.storyToScriptStream.isRecoveredRunning ||
+    execution.storyToScriptStream.status === 'running'
+  const isScriptToStoryboardRunning =
+    execution.scriptToStoryboardStream.isRunning ||
+    execution.scriptToStoryboardStream.isRecoveredRunning ||
+    execution.scriptToStoryboardStream.status === 'running'
+  const stageArtifacts = resolveEpisodeStageArtifacts(episode)
+
   const isAnyOperationRunning =
+    isStartingStoryToScript ||
+    isStartingScriptToStoryboard ||
     execution.isSubmittingTTS ||
     execution.isAssetAnalysisRunning ||
     execution.isConfirmingAssets ||
     execution.isTransitioning ||
-    execution.storyToScriptStream.isRunning ||
-    execution.scriptToStoryboardStream.isRunning
+    isStoryToScriptRunning ||
+    isScriptToStoryboardRunning
+
+  useWorkspaceAutoRun({
+    searchParams,
+    router,
+    episodeId,
+    novelText: projectSnapshot.novelText,
+    isTransitioning: execution.isTransitioning,
+    isStoryToScriptRunning,
+    runWithRebuildConfirm: rebuildState.runWithRebuildConfirm,
+    runStoryToScriptFlow: execution.runStoryToScriptFlow,
+  })
 
   const capsuleNavItems = useWorkspaceStageNavigation({
     isAnyOperationRunning,
-    episode,
-    projectCharacterCount: projectSnapshot.projectCharacters.length,
-    episodeStoryboards,
+    stageArtifacts,
     t,
   })
 
@@ -128,6 +155,8 @@ export function useNovelPromotionWorkspaceController({
     isSubmittingTTS: execution.isSubmittingTTS,
     isTransitioning: execution.isTransitioning,
     isConfirmingAssets: execution.isConfirmingAssets,
+    isStartingStoryToScript,
+    isStartingScriptToStoryboard,
     videoRatio: projectSnapshot.videoRatio,
     artStyle: projectSnapshot.artStyle,
     videoModel: projectSnapshot.videoModel,
@@ -178,6 +207,8 @@ export function useNovelPromotionWorkspaceController({
     isAssetAnalysisRunning: execution.isAssetAnalysisRunning,
     isConfirmingAssets: execution.isConfirmingAssets,
     isTransitioning: execution.isTransitioning,
+    isStartingStoryToScript,
+    isStartingScriptToStoryboard,
     transitionProgress: execution.transitionProgress,
     storyToScriptConsoleMinimized: execution.storyToScriptConsoleMinimized,
     setStoryToScriptConsoleMinimized: execution.setStoryToScriptConsoleMinimized,

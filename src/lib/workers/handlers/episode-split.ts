@@ -1,4 +1,5 @@
 import type { Job } from 'bullmq'
+import { safeParseJsonObject } from '@/lib/json-repair'
 import { prisma } from '@/lib/prisma'
 import { executeAiTextStep } from '@/lib/ai-runtime'
 import { countWords } from '@/lib/word-count'
@@ -33,23 +34,8 @@ const EPISODE_SPLIT_BOUNDARY_SUFFIX = `
 2. Markers must be locatable in the original text; allow punctuation/whitespace differences only.
 3. If boundaries cannot be located reliably, return an empty episodes array.`
 
-function cleanJsonStringForParse(input: string): string {
-  return input.replace(/"([^"\\]|\\.)*"/g, (match) => {
-    return match
-      .replace(/(?<!\\)\n/g, '\\n')
-      .replace(/(?<!\\)\r/g, '\\r')
-      .replace(/(?<!\\)\t/g, '\\t')
-  })
-}
-
 function parseSplitResponse(aiResponse: string): SplitResponse {
-  const jsonMatch = aiResponse.match(/```json\s*([\s\S]*?)\s*```/) || aiResponse.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) {
-    throw new Error('Failed to parse AI response: missing JSON payload')
-  }
-
-  const jsonText = cleanJsonStringForParse(jsonMatch[1] || jsonMatch[0])
-  const parsed = JSON.parse(jsonText) as SplitResponse
+  const parsed = safeParseJsonObject(aiResponse) as SplitResponse
   if (!parsed || !Array.isArray(parsed.episodes) || parsed.episodes.length === 0) {
     throw new Error('Failed to parse AI response: invalid episodes payload')
   }
@@ -81,14 +67,10 @@ export async function handleEpisodeSplitTask(job: Job<TaskJobData>) {
     where: { id: projectId },
     select: {
       id: true,
-      mode: true,
     },
   })
   if (!project) {
     throw new Error('Project not found')
-  }
-  if (project.mode !== 'novel-promotion') {
-    throw new Error('Not a novel promotion project')
   }
 
   const novelProject = await prisma.novelPromotionProject.findFirst({

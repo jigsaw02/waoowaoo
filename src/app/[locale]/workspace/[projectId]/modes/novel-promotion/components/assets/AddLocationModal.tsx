@@ -5,10 +5,12 @@ import { useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { ART_STYLES } from '@/lib/constants'
 import { shouldShowError } from '@/lib/error-utils'
+import { useImageGenerationCount } from '@/lib/image-generation/use-image-generation-count'
 import { useAiCreateProjectLocation, useCreateProjectLocation } from '@/lib/query/hooks'
 import TaskStatusInline from '@/components/task/TaskStatusInline'
 import { resolveTaskPresentationState } from '@/lib/task/presentation'
 import { AppIcon } from '@/components/ui/icons'
+import type { LocationAvailableSlot } from '@/lib/location-available-slots'
 
 interface AddLocationModalProps {
   projectId: string
@@ -51,11 +53,13 @@ export default function AddLocationModal({
   const tc = useTranslations('common')
   const aiCreateLocationMutation = useAiCreateProjectLocation(projectId)
   const createLocationMutation = useCreateProjectLocation(projectId)
+  const { count: locationGenerationCount } = useImageGenerationCount('location')
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [aiInstruction, setAiInstruction] = useState('')
   const [artStyle, setArtStyle] = useState('american-comic')
+  const [availableSlots, setAvailableSlots] = useState<LocationAvailableSlot[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isAiDesigning, setIsAiDesigning] = useState(false)
   const aiDesigningState = isAiDesigning
@@ -85,6 +89,7 @@ export default function AddLocationModal({
         userInstruction: aiInstruction,
       })
       setDescription(data.prompt || '')
+      setAvailableSlots(Array.isArray(data.availableSlots) ? data.availableSlots : [])
       setAiInstruction('')
     } catch (error: unknown) {
       if (getErrorStatus(error) === 402) {
@@ -110,6 +115,8 @@ export default function AddLocationModal({
         name: name.trim(),
         description: description.trim(),
         artStyle,
+        count: locationGenerationCount,
+        availableSlots,
       })
       onSuccess()
       onClose()
@@ -126,8 +133,8 @@ export default function AddLocationModal({
 
   return (
     <div className="fixed inset-0 bg-[var(--glass-overlay)] flex items-center justify-center z-50 p-4">
-      <div className="bg-[var(--glass-bg-surface)] rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto">
-        <div className="p-6">
+      <div className="bg-[var(--glass-bg-surface)] rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="p-6 overflow-y-auto app-scrollbar flex-1 min-h-0">
           {/* 标题 */}
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-[var(--glass-text-primary)]">
@@ -167,12 +174,11 @@ export default function AddLocationModal({
                     key={style.value}
                     type="button"
                     onClick={() => setArtStyle(style.value)}
-                    className={`px-3 py-2 rounded-lg text-sm border transition-all flex items-center gap-2 ${artStyle === style.value
+                    className={`px-3 py-2 rounded-lg text-sm border transition-all flex items-center ${artStyle === style.value
                       ? 'border-[var(--glass-stroke-focus)] bg-[var(--glass-tone-info-bg)] text-[var(--glass-tone-info-fg)]'
                       : 'border-[var(--glass-stroke-base)] hover:border-[var(--glass-stroke-strong)] text-[var(--glass-text-secondary)]'
                       }`}
                   >
-                    <span>{style.preview}</span>
                     <span>{style.label}</span>
                   </button>
                 ))}

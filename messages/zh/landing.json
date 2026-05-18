@@ -1,7 +1,8 @@
 {
-  "title": "GAGUA",
+  "title": "waoowaoo",
   "subtitle": "AI影视Studio",
   "enterWorkspace": "进入工作区",
+  "loading": "加载中...",
   "getStarted": "立即体验",
   "learnMore": "了解更多",
   "features": {
@@ -21,6 +22,6 @@
     }
   },
   "footer": {
-    "copyright": "2026-2036 GAGUA AI. All rights reserved."
+    "copyright": "2026 waoowaoo AI. All rights reserved."
   }
 }

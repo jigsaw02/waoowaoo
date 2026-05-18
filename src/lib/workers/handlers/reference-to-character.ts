@@ -13,12 +13,13 @@ import {
   getArtStylePrompt,
 } from '@/lib/constants'
 import { encodeImageUrls } from '@/lib/contracts/image-urls-contract'
-import { generateUniqueKey, getSignedUrl, uploadToCOS } from '@/lib/cos'
+import { generateUniqueKey, getSignedUrl, uploadObject } from '@/lib/storage'
 import { initializeFonts, createLabelSVG } from '@/lib/fonts'
 import { reportTaskProgress } from '@/lib/workers/shared'
 import { assertTaskActive } from '@/lib/workers/utils'
 import { TASK_TYPE, type TaskJobData } from '@/lib/task/types'
 import { buildPrompt, PROMPT_IDS } from '@/lib/prompt-i18n'
+import { normalizeImageGenerationCount } from '@/lib/image-generation/count'
 import {
   parseReferenceImages,
   readBoolean,
@@ -26,7 +27,7 @@ import {
 } from './reference-to-character-helpers'
 const POLL_MAX_ATTEMPTS = 60
 const POLL_INTERVAL_MS = 2000
-async function generateLabeledImage(params: {
+async function generateReferenceImage(params: {
   job: Job<TaskJobData>
   imageIndex: number
   userId: string
@@ -35,7 +36,7 @@ async function generateLabeledImage(params: {
   referenceImages?: string[]
   falApiKey?: string | null
   keyPrefix: string
-  labelText: string
+  labelText?: string
 }): Promise<string | null> {
   const {
     job,
@@ -90,28 +91,33 @@ async function generateLabeledImage(params: {
       logPrefix: `[reference-to-character:${imageIndex + 1}]`,
     })
     const buffer = Buffer.from(await imgRes.arrayBuffer())
-    const meta = await sharp(buffer).metadata()
-    const width = meta.width || 2160
-    const height = meta.height || 2160
-    const fontSize = Math.floor(height * 0.04)
-    const pad = Math.floor(fontSize * 0.5)
-    const barHeight = fontSize + pad * 2
-
-    const svg = await createLabelSVG(width, barHeight, fontSize, pad, labelText)
-    const processed = await sharp(buffer)
-      .extend({
-        top: barHeight,
-        bottom: 0,
-        left: 0,
-        right: 0,
-        background: { r: 0, g: 0, b: 0, alpha: 1 },
-      })
-      .composite([{ input: svg, top: 0, left: 0 }])
-      .jpeg({ quality: 90, mozjpeg: true })
-      .toBuffer()
+    const processed = labelText
+      ? await (async () => {
+        const meta = await sharp(buffer).metadata()
+        const width = meta.width || 2160
+        const height = meta.height || 2160
+        const fontSize = Math.floor(height * 0.04)
+        const pad = Math.floor(fontSize * 0.5)
+        const barHeight = fontSize + pad * 2
+        const svg = await createLabelSVG(width, barHeight, fontSize, pad, labelText)
+        return await sharp(buffer)
+          .extend({
+            top: barHeight,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            background: { r: 0, g: 0, b: 0, alpha: 1 },
+          })
+          .composite([{ input: svg, top: 0, left: 0 }])
+          .jpeg({ quality: 90, mozjpeg: true })
+          .toBuffer()
+      })()
+      : await sharp(buffer)
+        .jpeg({ quality: 90, mozjpeg: true })
+        .toBuffer()
 
     const key = generateUniqueKey(`${keyPrefix}-${Date.now()}-${imageIndex}`, 'jpg')
-    return await uploadToCOS(processed, key)
+    return await uploadObject(processed, key)
   } catch {
     return null
   }
@@ -148,8 +154,9 @@ export async function handleReferenceToCharacterTask(job: Job<TaskJobData>) {
     displayMode: 'detail',
   })
   await assertTaskActive(job, 'reference_to_character_prepare')
-
-  await initializeFonts()
+  if (isProject) {
+    await initializeFonts()
+  }
 
   const userConfig = await getUserModelConfig(job.data.userId)
   const imageModel = readString(userConfig.characterModel)
@@ -204,6 +211,7 @@ export async function handleReferenceToCharacterTask(job: Job<TaskJobData>) {
   const useReferenceImages = !customDescription
   const { apiKey: falApiKey } = await getProviderConfig(job.data.userId, 'fal')
   const keyPrefix = isAssetHub ? 'ref-char' : `proj-ref-char-${job.data.projectId}`
+  const count = normalizeImageGenerationCount('reference-to-character', payload.count)
 
   await reportTaskProgress(job, 35, {
     stage: 'reference_to_character_generate',
@@ -211,8 +219,8 @@ export async function handleReferenceToCharacterTask(job: Job<TaskJobData>) {
     displayMode: 'detail',
   })
 
-  const imageResults = await Promise.all([0, 1, 2].map(async (index) =>
-    await generateLabeledImage({
+  const imageResults = await Promise.all(Array.from({ length: count }, (_value, index) => index).map(async (index) =>
+    await generateReferenceImage({
       job,
       imageIndex: index,
       userId: job.data.userId,
@@ -221,7 +229,7 @@ export async function handleReferenceToCharacterTask(job: Job<TaskJobData>) {
       referenceImages: useReferenceImages ? allReferenceImages : undefined,
       falApiKey,
       keyPrefix,
-      labelText: characterName,
+      ...(isProject ? { labelText: characterName } : {}),
     }),
   ))
 

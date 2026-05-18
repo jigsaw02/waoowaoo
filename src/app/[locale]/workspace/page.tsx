@@ -1,16 +1,18 @@
 'use client'
 import { logError as _ulogError } from '@/lib/logging/core'
-
 import { useState, useEffect, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import Navbar from '@/components/Navbar'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import TaskStatusInline from '@/components/task/TaskStatusInline'
 import { resolveTaskPresentationState } from '@/lib/task/presentation'
 import { AppIcon, IconGradientDefs } from '@/components/ui/icons'
+import { shouldGuideToModelSetup } from '@/lib/workspace/model-setup'
+import { Link, useRouter } from '@/i18n/navigation'
+import { apiFetch } from '@/lib/api-fetch'
+import { readApiErrorMessage } from '@/lib/api/read-error-message'
+import { validateProjectDraft } from '@/lib/projects/validation'
 
 interface ProjectStats {
   episodes: number
@@ -45,6 +47,24 @@ function formatProjectCost(amount: number, currency = DEFAULT_BILLING_CURRENCY):
   return `¥${amount.toFixed(2)}`
 }
 
+function toProjectValidationMessage(
+  issue: ReturnType<typeof validateProjectDraft>,
+  t: ReturnType<typeof useTranslations>,
+): string | null {
+  if (!issue) return null
+
+  switch (issue.code) {
+    case 'PROJECT_NAME_REQUIRED':
+      return t('validation.nameRequired')
+    case 'PROJECT_NAME_TOO_LONG':
+      return t('validation.nameTooLong')
+    case 'PROJECT_DESCRIPTION_TOO_LONG':
+      return t('validation.descriptionTooLong')
+  }
+
+  return null
+}
+
 export default function WorkspacePage() {
   const { data: session, status } = useSession()
   const router = useRouter()
@@ -52,12 +72,14 @@ export default function WorkspacePage() {
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createLoading, setCreateLoading] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     description: ''
   })
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
   const [editFormData, setEditFormData] = useState({
     name: '',
     description: ''
@@ -70,6 +92,7 @@ export default function WorkspacePage() {
   const [pagination, setPagination] = useState<Pagination>({ page: 1, pageSize: PAGE_SIZE, total: 0, totalPages: 0 })
   const [searchQuery, setSearchQuery] = useState('')
   const [searchInput, setSearchInput] = useState('')
+  const [modelNotConfigured, setModelNotConfigured] = useState(false)
 
   const t = useTranslations('workspace')
   const tc = useTranslations('common')
@@ -78,7 +101,7 @@ export default function WorkspacePage() {
   useEffect(() => {
     if (status === 'loading') return
     if (!session) {
-      router.push('/auth/signin')
+      router.push({ pathname: '/auth/signin' })
       return
     }
   }, [session, status, router])
@@ -95,7 +118,7 @@ export default function WorkspacePage() {
         params.set('search', search.trim())
       }
 
-      const response = await fetch(`/api/projects?${params}`)
+      const response = await apiFetch(`/api/projects?${params}`)
       if (response.ok) {
         const data = await response.json()
         setProjects(data.projects)
@@ -121,6 +144,24 @@ export default function WorkspacePage() {
     setPagination(prev => ({ ...prev, page: 1 }))
   }
 
+  // 打开新建项目弹窗并检测模型配置
+  const openCreateModal = useCallback(() => {
+    setCreateError(null)
+    setShowCreateModal(true)
+    // 异步检测模型配置状态
+    void (async () => {
+      try {
+        const res = await apiFetch('/api/user-preference')
+        if (res.ok) {
+          const payload: unknown = await res.json()
+          setModelNotConfigured(shouldGuideToModelSetup(payload))
+        }
+      } catch {
+        // 忽略检测失败
+      }
+    })()
+  }, [])
+
   // 分页处理
   const handlePageChange = (newPage: number) => {
     setPagination(prev => ({ ...prev, page: newPage }))
@@ -128,35 +169,51 @@ export default function WorkspacePage() {
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.name.trim()) return
+    const validationMessage = toProjectValidationMessage(validateProjectDraft(formData), t)
+    if (validationMessage) {
+      setCreateError(validationMessage)
+      return
+    }
 
+    setCreateError(null)
     setCreateLoading(true)
     try {
-      const response = await fetch('/api/projects', {
+      const response = await apiFetch('/api/projects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          ...formData,
-          mode: 'novel-promotion' // 固定为 novel-promotion
-        })
+        body: JSON.stringify(formData)
       })
 
       if (response.ok) {
+        let shouldOpenModelSetup = true
+        const preferenceResponse = await apiFetch('/api/user-preference')
+        if (preferenceResponse.ok) {
+          const preferencePayload: unknown = await preferenceResponse.json()
+          shouldOpenModelSetup = shouldGuideToModelSetup(preferencePayload)
+        } else {
+          _ulogError('获取用户偏好失败:', { status: preferenceResponse.status })
+        }
+
         // 创建成功后刷新第一页
         setSearchQuery('')
         setSearchInput('')
         setPagination(prev => ({ ...prev, page: 1 }))
-        fetchProjects(1, '')
+        void fetchProjects(1, '')
         setShowCreateModal(false)
         setFormData({ name: '', description: '' })
+
+        if (shouldOpenModelSetup) {
+          alert(t('analysisModelRequiredAfterCreate'))
+          router.push({ pathname: '/profile' })
+        }
       } else {
-        alert(t('createFailed'))
+        setCreateError(await readApiErrorMessage(response, t('createFailed')))
       }
     } catch (error) {
       _ulogError('创建项目失败:', error)
-      alert(t('createFailed'))
+      setCreateError(error instanceof Error ? error.message : t('createFailed'))
     } finally {
       setCreateLoading(false)
     }
@@ -178,11 +235,18 @@ export default function WorkspacePage() {
 
   const handleEditProject = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!editingProject || !editFormData.name.trim()) return
+    if (!editingProject) return
 
+    const validationMessage = toProjectValidationMessage(validateProjectDraft(editFormData), t)
+    if (validationMessage) {
+      setEditError(validationMessage)
+      return
+    }
+
+    setEditError(null)
     setCreateLoading(true)
     try {
-      const response = await fetch(`/api/projects/${editingProject.id}`, {
+      const response = await apiFetch(`/api/projects/${editingProject.id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json'
@@ -197,10 +261,10 @@ export default function WorkspacePage() {
         setEditingProject(null)
         setEditFormData({ name: '', description: '' })
       } else {
-        alert(t('updateFailed'))
+        setEditError(await readApiErrorMessage(response, t('updateFailed')))
       }
-    } catch {
-      alert(t('updateFailed'))
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : t('updateFailed'))
     } finally {
       setCreateLoading(false)
     }
@@ -213,7 +277,7 @@ export default function WorkspacePage() {
     setShowDeleteConfirm(false)
 
     try {
-      const response = await fetch(`/api/projects/${projectToDelete.id}`, {
+      const response = await apiFetch(`/api/projects/${projectToDelete.id}`, {
         method: 'DELETE'
       })
 
@@ -247,6 +311,7 @@ export default function WorkspacePage() {
     e.preventDefault()  // 阻止 Link 导航
     e.stopPropagation()
     setEditingProject(project)
+    setEditError(null)
     setEditFormData({
       name: project.name,
       description: project.description || ''
@@ -310,7 +375,7 @@ export default function WorkspacePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {/* New Project Card */}
           <div
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => openCreateModal()}
             className="glass-surface p-6 cursor-pointer group flex items-center justify-center bg-gradient-to-br from-blue-500/5 via-cyan-500/5 to-blue-600/5 hover:from-blue-500/10 hover:via-cyan-500/10 hover:to-blue-600/10 transition-all duration-300"
           >
             <div className="flex flex-col items-center gap-3">
@@ -335,7 +400,7 @@ export default function WorkspacePage() {
             projects.map((project) => (
               <Link
                 key={project.id}
-                href={`/workspace/${project.id}`}
+                href={{ pathname: `/workspace/${project.id}` }}
                 className="glass-surface cursor-pointer relative group block hover:border-[var(--glass-tone-info-fg)]/40 transition-all duration-300 overflow-hidden"
               >
                 {/* 悬停光效 */}
@@ -454,7 +519,7 @@ export default function WorkspacePage() {
             </p>
             {!searchQuery && (
               <button
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => openCreateModal()}
                 className="glass-btn-base glass-btn-primary px-6 py-3"
               >
                 {t('newProject')}
@@ -520,6 +585,22 @@ export default function WorkspacePage() {
         <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50 backdrop-blur-sm">
           <div className="glass-surface-modal p-6 w-full max-w-md mx-4">
             <h2 className="text-xl font-bold text-[var(--glass-text-primary)] mb-4">{t('createProject')}</h2>
+            {modelNotConfigured && (
+              <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+                <AppIcon name="alert" className="w-4 h-4 shrink-0 mt-0.5" />
+                <span className="text-[12px] leading-relaxed">
+                  {t('modelNotConfigured.before')}
+                  <Link
+                    href={{ pathname: '/profile' }}
+                    className="font-semibold underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-300 mx-0.5"
+                    onClick={() => setShowCreateModal(false)}
+                  >
+                    {t('modelNotConfigured.link')}
+                  </Link>
+                  {t('modelNotConfigured.after')}
+                </span>
+              </div>
+            )}
             <form onSubmit={handleCreateProject}>
               <div className="mb-4">
                 <label htmlFor="name" className="glass-field-label block mb-2">
@@ -529,7 +610,12 @@ export default function WorkspacePage() {
                   id="name"
                   type="text"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, name: e.target.value })
+                    if (createError) {
+                      setCreateError(null)
+                    }
+                  }}
                   className="glass-input-base w-full px-3 py-2"
                   placeholder={t('projectNamePlaceholder')}
                   maxLength={100}
@@ -544,18 +630,29 @@ export default function WorkspacePage() {
                 <textarea
                   id="description"
                   value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, description: e.target.value })
+                    if (createError) {
+                      setCreateError(null)
+                    }
+                  }}
                   className="glass-textarea-base w-full px-3 py-2"
                   placeholder={t('projectDescriptionPlaceholder')}
                   rows={3}
                   maxLength={500}
                 />
               </div>
+              {createError && (
+                <p className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-600">
+                  {createError}
+                </p>
+              )}
               <div className="flex justify-end space-x-3">
                 <button
                   type="button"
                   onClick={() => {
                     setShowCreateModal(false)
+                    setCreateError(null)
                     setFormData({ name: '', description: '' })
                   }}
                   className="glass-btn-base glass-btn-secondary px-4 py-2"
@@ -590,7 +687,12 @@ export default function WorkspacePage() {
                   id="edit-name"
                   type="text"
                   value={editFormData.name}
-                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                  onChange={(e) => {
+                    setEditFormData({ ...editFormData, name: e.target.value })
+                    if (editError) {
+                      setEditError(null)
+                    }
+                  }}
                   className="glass-input-base w-full px-3 py-2"
                   placeholder={t('projectNamePlaceholder')}
                   maxLength={100}
@@ -604,19 +706,30 @@ export default function WorkspacePage() {
                 <textarea
                   id="edit-description"
                   value={editFormData.description}
-                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                  onChange={(e) => {
+                    setEditFormData({ ...editFormData, description: e.target.value })
+                    if (editError) {
+                      setEditError(null)
+                    }
+                  }}
                   className="glass-textarea-base w-full px-3 py-2"
                   placeholder={t('projectDescriptionPlaceholder')}
                   rows={3}
                   maxLength={500}
                 />
               </div>
+              {editError && (
+                <p className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-600">
+                  {editError}
+                </p>
+              )}
               <div className="flex justify-end space-x-3">
                 <button
                   type="button"
                   onClick={() => {
                     setShowEditModal(false)
                     setEditingProject(null)
+                    setEditError(null)
                     setEditFormData({ name: '', description: '' })
                   }}
                   className="glass-btn-base glass-btn-secondary px-4 py-2"

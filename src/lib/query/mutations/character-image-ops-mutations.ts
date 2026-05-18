@@ -1,14 +1,16 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '../keys'
+import { apiFetch } from '@/lib/api-fetch'
 import {
     clearTaskTargetOverlay,
     upsertTaskTargetOverlay,
 } from '../task-target-overlay'
 import {
-    getPageLocale,
     invalidateQueryTemplates,
     requestJsonWithError,
+    requestTaskResponseWithError,
 } from './mutation-shared'
+import { resolveTaskResponse } from '@/lib/task/client'
 
 export function useModifyProjectCharacterImage(projectId: string) {
     const queryClient = useQueryClient()
@@ -26,14 +28,17 @@ export function useModifyProjectCharacterImage(projectId: string) {
             modifyPrompt: string
             extraImageUrls?: string[]
         }) => {
-            return await requestJsonWithError(`/api/novel-promotion/${projectId}/modify-asset-image`, {
+            const response = await requestTaskResponseWithError(`/api/assets/${params.characterId}/modify-render`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    type: 'character',
+                    scope: 'project',
+                    kind: 'character',
+                    projectId,
                     ...params,
                 }),
             }, 'Failed to modify image')
+            return await resolveTaskResponse(response)
         },
         onMutate: ({ appearanceId }) => {
             upsertTaskTargetOverlay(queryClient, {
@@ -64,14 +69,24 @@ export function useRegenerateCharacterGroup(projectId: string) {
         invalidateQueryTemplates(queryClient, [queryKeys.projectAssets.all(projectId)])
 
     return useMutation({
-        mutationFn: async ({ characterId, appearanceId }: { characterId: string; appearanceId: string }) => {
-            return await requestJsonWithError(`/api/novel-promotion/${projectId}/regenerate-group`, {
+        mutationFn: async ({
+            characterId,
+            appearanceId,
+            count,
+        }: {
+            characterId: string
+            appearanceId: string
+            count?: number
+        }) => {
+            return await requestJsonWithError(`/api/assets/${characterId}/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    type: 'character',
-                    id: characterId,
+                    scope: 'project',
+                    kind: 'character',
+                    projectId,
                     appearanceId,
+                    count,
                 })
             }, 'Failed to regenerate group')
         },
@@ -113,12 +128,13 @@ export function useRegenerateSingleCharacterImage(projectId: string) {
             appearanceId: string
             imageIndex: number
         }) => {
-            return await requestJsonWithError(`/api/novel-promotion/${projectId}/regenerate-single-image`, {
+            return await requestJsonWithError(`/api/assets/${characterId}/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    type: 'character',
-                    id: characterId,
+                    scope: 'project',
+                    kind: 'character',
+                    projectId,
                     appearanceId,
                     imageIndex,
                 })
@@ -164,12 +180,13 @@ export function useUpdateProjectAppearanceDescription(projectId: string) {
             description: string
             descriptionIndex?: number
         }) => {
-            return await requestJsonWithError(`/api/novel-promotion/${projectId}/character/appearance`, {
+            return await requestJsonWithError(`/api/assets/${characterId}/variants/${appearanceId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    characterId,
-                    appearanceId,
+                    scope: 'project',
+                    kind: 'character',
+                    projectId,
                     description,
                     descriptionIndex: typeof descriptionIndex === 'number' ? descriptionIndex : 0,
                 }),
@@ -186,12 +203,13 @@ export function useBatchGenerateCharacterImages(projectId: string) {
         mutationFn: async (items: Array<{ characterId: string; appearanceId: string }>) => {
             const results = await Promise.allSettled(
                 items.map(item =>
-                    fetch(`/api/novel-promotion/${projectId}/generate-image`, {
+                    apiFetch(`/api/assets/${item.characterId}/generate`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Accept-Language': getPageLocale() },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            type: 'character',
-                            id: item.characterId,
+                            scope: 'project',
+                            kind: 'character',
+                            projectId,
                             appearanceId: item.appearanceId
                         })
                     })

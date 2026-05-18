@@ -7,6 +7,8 @@ const prismaMock = vi.hoisted(() => ({
   novelPromotionProject: { findUnique: vi.fn() },
   novelPromotionEpisode: { findUnique: vi.fn() },
   novelPromotionClip: {
+    findMany: vi.fn(async () => []),
+    update: vi.fn(async () => ({ id: 'clip-row-1' })),
     deleteMany: vi.fn(async () => ({})),
     create: vi.fn(async () => ({ id: 'clip-row-1' })),
   },
@@ -83,7 +85,7 @@ describe('worker clips-build behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks()
 
-    prismaMock.project.findUnique.mockResolvedValue({ id: 'project-1', mode: 'novel-promotion' })
+    prismaMock.project.findUnique.mockResolvedValue({ id: 'project-1' })
 
     prismaMock.novelPromotionProject.findUnique.mockResolvedValue({
       id: 'np-project-1',
@@ -98,6 +100,7 @@ describe('worker clips-build behavior', () => {
       novelPromotionProjectId: 'np-project-1',
       novelText: 'A START one END B START two END C',
     })
+    prismaMock.novelPromotionClip.findMany.mockResolvedValue([])
 
     llmMock.getCompletionContent.mockReturnValue(
       JSON.stringify([
@@ -134,6 +137,7 @@ describe('worker clips-build behavior', () => {
         summary: 'first clip',
         location: 'Old Town',
         characters: JSON.stringify(['Hero']),
+        props: null,
         content: 'START one END',
       },
       select: { id: true },

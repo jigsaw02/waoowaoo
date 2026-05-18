@@ -31,6 +31,7 @@ const GENERATION_OPERATION_PATTERNS = [
   /\/story-to-script(?:-|\/|$)/,
   /\/script-to-storyboard(?:-|\/|$)/,
   /\/screenplay-conversion(?:\/|$)/,
+  /\/ai-story-expand(?:\/|$)/,
   /\/voice-(?:analyze|design|generate)(?:\/|$)/,
   /\/ai-(?:create|modify)-/,
   /\/modify-(?:asset|storyboard)-image(?:\/|$)/,
@@ -374,6 +375,7 @@ export const API_ERROR_CODES = {
   NOT_FOUND: { status: getErrorSpec('NOT_FOUND').httpStatus },
   INSUFFICIENT_BALANCE: { status: getErrorSpec('INSUFFICIENT_BALANCE').httpStatus },
   RATE_LIMIT: { status: getErrorSpec('RATE_LIMIT').httpStatus },
+  MODEL_NOT_OPEN: { status: getErrorSpec('MODEL_NOT_OPEN').httpStatus },
   QUOTA_EXCEEDED: { status: getErrorSpec('QUOTA_EXCEEDED').httpStatus },
   GENERATION_FAILED: { status: getErrorSpec('GENERATION_FAILED').httpStatus },
   GENERATION_TIMEOUT: { status: getErrorSpec('GENERATION_TIMEOUT').httpStatus },
@@ -386,6 +388,7 @@ export const API_ERROR_CODES = {
   CONFLICT: { status: getErrorSpec('CONFLICT').httpStatus },
   INTERNAL_ERROR: { status: getErrorSpec('INTERNAL_ERROR').httpStatus },
   NETWORK_ERROR: { status: getErrorSpec('NETWORK_ERROR').httpStatus },
+  EMPTY_RESPONSE: { status: getErrorSpec('EMPTY_RESPONSE').httpStatus },
 } as const
 
 export type ApiErrorCode = UnifiedErrorCode
